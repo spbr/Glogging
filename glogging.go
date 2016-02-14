@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"strings"
@@ -77,6 +78,9 @@ func main() {
 	if !strings.HasSuffix(config.DestDir, string(os.PathSeparator)) {
 		config.DestDir = config.DestDir + string(os.PathSeparator)
 	}
+	if !strings.HasSuffix(config.SrcDir, string(os.PathSeparator)) {
+		config.SrcDir = config.SrcDir + string(os.PathSeparator)
+	}
 	/*
 	 ** Let's spin through directory
 	 */
@@ -107,7 +111,6 @@ func main() {
 
 	close(filechannel)
 	wg.Wait()
-	fmt.Println("Finishing up")
 	os.Exit(0)
 }
 
@@ -127,6 +130,51 @@ func archiveFiles(wg *sync.WaitGroup, filechannel chan os.FileInfo, config *Conf
 		if !more {
 			return
 		}
-		fmt.Printf("New File: %s%s\n", config.DestDir, file.Name())
+		_, _ = copyFile(config, file)
 	}
+}
+
+func copyFile(config *Config, file os.FileInfo) (bool, error) {
+	fullpath := fmt.Sprintf("%s%s", config.SrcDir, file.Name())
+	tempDestPath := fmt.Sprintf("%s.%s", config.DestDir, file.Name())
+	destPath := fmt.Sprintf("%s%s", config.DestDir, file.Name())
+	ifile, err := os.Open(fullpath)
+	if err != nil {
+		return false, err
+	}
+	defer ifile.Close()
+
+	dfile, err := os.Create(tempDestPath)
+	if err != nil {
+		return false, err
+	}
+
+	data := make([]byte, 4096000)
+	for {
+		data = data[:cap(data)]
+		n, err := ifile.Read(data)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Printf("Error reading in file: %s\n", err.Error())
+			dfile.Close()
+			os.Remove(tempDestPath)
+			return false, err
+		}
+		data = data[:n]
+		dfile.Write(data)
+	}
+	dfile.Close()
+	err = os.Rename(tempDestPath, destPath)
+	if err != nil {
+		os.Remove(tempDestPath)
+		return false, err
+	}
+	err = os.Chmod(destPath, file.Mode())
+	if err != nil {
+		os.Remove(destPath)
+		return false, err
+	}
+	return true, nil
 }
